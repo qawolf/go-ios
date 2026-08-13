@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -59,18 +60,11 @@ func main() {
 
 const version = "local-build"
 
-// Main Exports main for testing
-func Main() {
-	helpCatalog, err := clihelp.Load()
-	exitIfError("failed loading help definitions", err)
-	if handled, exitCode := helpCatalog.WriteHelp(os.Args[1:], version, os.Stdout, os.Stderr); handled {
-		if exitCode != 0 {
-			os.Exit(exitCode)
-		}
-		return
-	}
-
-	usage := fmt.Sprintf(`go-ios %s
+// cliUsage returns the docopt usage string that drives command dispatch.
+// It is a function (not inlined in Main) so tests can parse real command
+// lines against the exact usage the CLI ships.
+func cliUsage() string {
+	return fmt.Sprintf(`go-ios %s
 
 Usage:
   ios --version | version [options]
@@ -109,6 +103,8 @@ Usage:
   ios image unmount [options]
   ios info [display | lockdown] [options]
   ios install --path=<ipaOrAppFolder> [options]
+  ios instruments fps [--duration=<seconds>] [options]
+  ios instruments network [--duration=<seconds>] [options]
   ios instruments notifications [options]
   ios ip [options]
   ios kill (<bundleID> | --pid=<processID> | --process=<processName>) [options]
@@ -118,10 +114,15 @@ Usage:
   ios listen [options]
   ios lockdown get [<key>] [--domain=<domain>] [options]
   ios memlimitoff (--process=<processName>) [options]
+  ios mdm fetch-unlock-token --p12file=<p12file> --output=<output> [--password=<p12password>] [options]
+  ios mdm clear-passcode --p12file=<p12file> --token=<tokenFile> [--password=<p12password>] [options]
+  ios mdm clear-screen-time-password --p12file=<p12file> [--password=<p12password>] [options]
+  ios mdm security-info --p12file=<p12file> [--password=<p12password>] [options]
   ios mobilegestalt <key>... [--plist] [options]
   ios pair [--p12file=<orgid>] [--password=<p12password>] [options]
+  ios pasteboard (set [<text>] | get) [options]
   ios pcap [options] [--pid=<processID>] [--process=<processName>]
-  ios prepare [--skip-all] [--skip=<option>]... [--certfile=<cert_file_path>] [--orgname=<org_name>] [--p12password=<p12password>] [--locale=<locale>] [--lang=<lang>] [options]
+  ios prepare [--skip-all] [--skip=<option>]... [--certfile=<cert_file_path>] [--orgname=<org_name>] [--p12password=<p12password>] [--locale=<locale>] [--lang=<lang>] [--timezone=<tz>] [options]
   ios prepare cloudconfig [options]
   ios prepare create-cert
   ios prepare printskip
@@ -135,9 +136,9 @@ Usage:
   ios resetax [options]
   ios resetlocation [options]
   ios rsd ls [options]
-  ios runtest [--bundle-id=<bundleid>] [--test-runner-bundle-id=<testrunnerbundleid>] [--xctest-config=<xctestconfig>] [--log-output=<file>] [--xctest] [--test-to-run=<tests>]... [--test-to-skip=<tests>]... [--env=<e>]... [options]
+  ios runtest [--bundle-id=<bundleid>] [--test-runner-bundle-id=<testrunnerbundleid>] [--xctest-config=<xctestconfig>] [--log-output=<file>] [--junit-output=<file>] [--xctest] [--test-to-run=<tests>]... [--test-to-skip=<tests>]... [--env=<e>]... [options]
   ios runwda [--bundleid=<bundleid>] [--testrunnerbundleid=<testbundleid>] [--xctestconfig=<xctestconfig>] [--log-output=<file>] [--arg=<a>]... [--env=<e>]... [options]
-  ios runxctest [--xctestrun-file-path=<xctestrunFilePath>] [--log-output=<file>] [options]
+  ios runxctest [--xctestrun-file-path=<xctestrunFilePath>] [--log-output=<file>] [--junit-output=<file>] [options]
   ios screenshot [options] [--output=<outfile>] [--stream] [--port=<port>]
   ios sign certificate appstoreconnect --asc-key-id=<keyid> --asc-issuer-id=<issuerid> --asc-private-key=<p8file> [--p12-output=<p12file>] [--p12password=<password>] [--revoke-existing] [options]
   ios sign provision appstoreconnect --bundleid=<bundleid> --asc-key-id=<keyid> --asc-issuer-id=<issuerid> --asc-private-key=<p8file> --profile-output=<mobileprovision> [--p12-output=<p12file>] [--certificate-id=<id>] [--revoke-existing] [--p12password=<password>] [--bundle-name=<name>] [--profile-name=<name>] [--device-name=<name>] [options]
@@ -254,7 +255,7 @@ The commands work as following:
                                                   or use a pattern like 'ios crash ls "*ips*"' to filter
 
     ios crash rm <cwd> <pattern> [options]        Remove file pattern from dir. Ex.: 'ios crash rm "." "*"' to delete everything
-    ios date [options]                            Prints the device date
+    ios date [options]                            Prints the device date in the device's own timezone
     ios debug [--stop-at-entry] <app_path>        Start debug with lldb
     ios devicename [options]                      Prints the devicename
 
@@ -325,6 +326,14 @@ The commands work as following:
     ios image unmount [options]                     Unmount developer disk image
     ios info [display | lockdown] [options]         Prints a dump of device information from the given source.
     ios install --path=<ipaOrAppFolder> [options]   Specify a .app folder or an installable ipa file that will be installed.
+    ios instruments fps [--duration=<seconds>] [options]
+                                                    Stream frames-per-second samples from the instruments graphics service.
+                                                    One line is printed per sample. Stops after --duration seconds, or on CTRL+C.
+
+    ios instruments network [--duration=<seconds>] [options]
+                                                    Stream network samples from the instruments network monitoring service.
+                                                    One line is printed per sample. Stops after --duration seconds, or on CTRL+C.
+
     ios instruments notifications [options]         Listen to application state notifications
 
     ios ip [options]                                Uses the live pcap iOS packet capture to wait until it finds one that contains the IP address of the device.
@@ -354,6 +363,37 @@ The commands work as following:
 
     ios memlimitoff (--process=<processName>) [options]                Waives memory limit set by iOS (For instance a Broadcast Extension limit is 50 MB).
 
+    ios mdm fetch-unlock-token --p12file=<p12file> --output=<output> [--password=<p12password>]
+                                                                       Save the device passcode unlock token. The device must have no passcode
+                                                                       set; run once during provisioning. The token can be passed to
+                                                                       "mdm clear-passcode" at any time later.
+                                                                       Use --output=<file> to write raw bytes to a file, or --output=- to
+                                                                       print base64-encoded token to stdout (for piping into a secrets manager).
+                                                                       Requires supervision: pass --p12file and --password (or P12_PASSWORD env var).
+
+    ios mdm clear-passcode --p12file=<p12file> --token=<tokenFile> [--password=<p12password>]
+                                                                       Remove the device lock passcode using a previously saved unlock token.
+                                                                       The token must have been saved before the passcode was set.
+                                                                       Works regardless of current lock state; does not require knowing the passcode.
+                                                                       Use --token=<file> for a raw token file, or --token=- to read a
+                                                                       base64-encoded token from stdin.
+                                                                       Requires supervision: pass --p12file and --password (or P12_PASSWORD env var).
+
+    ios mdm clear-screen-time-password --p12file=<p12file> [--password=<p12password>]
+                                                                       Clear the Screen Time restrictions passcode (4-digit PIN protecting Screen Time settings).
+                                                                       No unlock token required; supervisor identity alone suffices.
+                                                                       Does not affect profile-based restrictions or the device lock passcode.
+                                                                       Requires supervision: pass --p12file and --password (or P12_PASSWORD env var).
+
+    ios mdm security-info --p12file=<p12file> [--password=<p12password>]
+                                                                       Print the device's security status as JSON: PasscodePresent, PasscodeCompliant,
+                                                                       PasscodeCompliantWithProfiles, lock grace periods, hardware encryption caps
+                                                                       and management status. Read-only; performs no keybag operation.
+                                                                       PasscodePresent is the reliable "does this device have a passcode?" signal —
+                                                                       lockdown's PasswordProtected reports whether the device is currently locked
+                                                                       instead, and reads false on an unlocked device that has a passcode.
+                                                                       Requires supervision: pass --p12file and --password (or P12_PASSWORD env var).
+
     ios mobilegestalt <key>... [--plist] [options]                     Lets you query mobilegestalt keys.
                                                                        Standard output is json but if desired you can get it in plist format by adding the --plist param.
                                                                        Ex.: "ios mobilegestalt MainScreenCanvasSizes ArtworkTraits --plist"
@@ -362,9 +402,12 @@ The commands work as following:
                                                                        to pair without a trust dialog. Specify the password either with the argument or
                                                                        by setting the environment variable 'P12_PASSWORD'
 
+    ios pasteboard (set [<text>] | get) [options]                     Read or write the device pasteboard (clipboard) over RemoteXPC (iOS 17+). Requires tunnel.
+                                                                       set writes <text> (or stdin when omitted) to the pasteboard; get prints its text.
+
     ios pcap [options] [--pid=<processID>] [--process=<processName>]   Starts a pcap dump of network traffic, use --pid or --process to filter specific processes.
 
-    ios prepare [--skip-all] [--skip=<option>]... [--certfile=<cert_file_path>] [--orgname=<org_name>] [--p12password=<p12password>] [--locale] [--lang] [options]
+    ios prepare [--skip-all] [--skip=<option>]... [--certfile=<cert_file_path>] [--orgname=<org_name>] [--p12password=<p12password>] [--locale] [--lang] [--timezone=<tz>] [options]
                                                                        Prepare a device. Use skip-all to skip everything multiple --skip args to skip only a subset.
                                                                        You can use 'ios prepare printskip' to get a list of all options to skip.
                                                                        Use certfile and orgname if you want to supervise the device.
@@ -373,6 +416,7 @@ The commands work as following:
                                                                        If you need certificates to supervise,
                                                                        run 'ios prepare create-cert' and go-ios will generate one you can use.
                                                                        --locale and --lang are optional, the default is en_US and en.
+                                                                       --timezone is an optional IANA timezone name (e.g. America/Chicago). Defaults to the host timezone.
                                                                        Run 'ios lang' to see a list of all supported locales and languages.
 
     ios prepare cloudconfig                                            Print the cloud configuration of the device as JSON.
@@ -405,10 +449,11 @@ The commands work as following:
     ios resetlocation [options]       Resets the location of the device to the actual one
     ios rsd ls [options]              List RSD services and their port.
 
-    ios runtest [--bundle-id=<bundleid>] [--test-runner-bundle-id=<testbundleid>] [--xctest-config=<xctestconfig>] [--log-output=<file>] [--xctest] [--test-to-run=<tests>]... [--test-to-skip=<tests>]... [--env=<e>]... [options]
+    ios runtest [--bundle-id=<bundleid>] [--test-runner-bundle-id=<testbundleid>] [--xctest-config=<xctestconfig>] [--log-output=<file>] [--junit-output=<file>] [--xctest] [--test-to-run=<tests>]... [--test-to-skip=<tests>]... [--env=<e>]... [options]
                                                                     Run a XCUITest.
                                                                     If you provide only bundle-id go-ios will try to dynamically create test-runner-bundle-id and xctest-config.
                                                                     If you provide '-' as log output, it prints resuts to stdout.
+                                                                    With --junit-output the test results are additionally written to the given file as JUnit XML.
                                                                     To be able to filter for tests to run or skip, use one argument per test selector.
                                                                     Ex.: runtest --test-to-run=(TestTarget.)TestClass/testMethod (the value for 'TestTarget' is optional)
                                                                     The method name can also be omitted and in this case all tests of the specified class are run
@@ -417,10 +462,11 @@ The commands work as following:
                                                                     Runs WebDriverAgents
                                                                     Specify runtime args and env vars like --env ENV_1=something --env ENV_2=else  and --arg ARG1 --arg ARG2
 
-    ios runxctest [--xctestrun-file-path=<xctestrunFilePath>]  [--log-output=<file>] [options]
+    ios runxctest [--xctestrun-file-path=<xctestrunFilePath>]  [--log-output=<file>] [--junit-output=<file>] [options]
                                                                     Run a XCTest.
                                                                     The --xctestrun-file-path specifies the path to the .xctestrun file to configure the test execution.
                                                                     If you provide '-' as log output, it prints resuts to stdout.
+                                                                    With --junit-output the test results are additionally written to the given file as JUnit XML.
 
     ios screenshot [options] [--output=<outfile>] [--stream] [--port=<port>]
                                                                     Takes a screenshot and writes it to the current dir or to <outfile>
@@ -564,7 +610,20 @@ The commands work as following:
                                                                     iOS 11+ only (Use --force to try on older versions).
 
   `, version)
-	arguments, err := docopt.ParseDoc(usage)
+}
+
+// Main Exports main for testing
+func Main() {
+	helpCatalog, err := clihelp.Load()
+	exitIfError("failed loading help definitions", err)
+	if handled, exitCode := helpCatalog.WriteHelp(os.Args[1:], version, os.Stdout, os.Stderr); handled {
+		if exitCode != 0 {
+			os.Exit(exitCode)
+		}
+		return
+	}
+
+	arguments, err := docopt.ParseDoc(cliUsage())
 	exitIfError("failed parsing args", err)
 	configureCLI(arguments)
 	if dispatchCommand(commandContext{Args: arguments}, preProxyCommands) {
@@ -642,10 +701,12 @@ func toEnvs(envsIn []string) map[string]interface{} {
 	env := map[string]interface{}{}
 
 	for _, entrystring := range envsIn {
-		entry := strings.Split(entrystring, "=")
-		key := entry[0]
-		value := entry[1]
-		env[key] = value
+		entry := strings.SplitN(entrystring, "=", 2)
+		if len(entry) != 2 {
+			slog.Warn("skipping malformed env entry, expected key=value", "entry", entrystring)
+			continue
+		}
+		env[entry[0]] = entry[1]
 	}
 
 	return env
@@ -858,7 +919,7 @@ func zoomTouch(device ios.DeviceEntry, operation string, force bool) {
 		if force && (operation == "enable" || operation == "disable") {
 			slog.Warn("Failed getting current ZoomTouch status. Continuing anyway.", "error", err)
 		} else {
-			exitIfError("failed getting current VoiceOver status", err)
+			exitIfError("failed getting current ZoomTouch status", err)
 		}
 	}
 
@@ -874,7 +935,7 @@ func zoomTouch(device ios.DeviceEntry, operation string, force bool) {
 	}
 	if operation != "get" && (force || wasEnabled != enable) {
 		err = ios.SetZoomTouch(device, enable)
-		exitIfError("failed setting VoiceOver", err)
+		exitIfError("failed setting ZoomTouch", err)
 	}
 	if operation == "get" {
 		if JSONdisabled {
@@ -1227,17 +1288,30 @@ func printDeviceDate(device ios.DeviceEntry) {
 	allValues, err := ios.GetValues(device)
 	exitIfError("failed getting values", err)
 
-	formatedDate := time.Unix(int64(allValues.Value.TimeIntervalSince1970), 0).Format(time.RFC850)
-	if JSONdisabled {
-		fmt.Println(formatedDate)
+	tz := allValues.Value.TimeZone
+	deviceTime := time.Unix(int64(allValues.Value.TimeIntervalSince1970), 0)
+	// Devices normally report a valid IANA name here, but don't fail a read-only
+	// command over it - fall back to the host timezone.
+	if loc, err := time.LoadLocation(tz); err == nil {
+		deviceTime = deviceTime.In(loc)
 	} else {
-		fmt.Println(convertToJSONString(map[string]interface{}{"formatedDate": formatedDate, "TimeIntervalSince1970": allValues.Value.TimeIntervalSince1970}))
+		slog.Warn("failed loading device timezone, printing date in host timezone", "timezone", tz, "error", err)
+	}
+
+	if JSONdisabled {
+		fmt.Println(deviceTime.Format(time.RFC3339))
+	} else {
+		fmt.Println(convertToJSONString(map[string]interface{}{
+			"TimeIntervalSince1970": allValues.Value.TimeIntervalSince1970,
+			"TimeZone":              tz,
+			"formatedDate":          deviceTime.Format(time.RFC850),
+		}))
 	}
 }
 
 func printInstalledApps(device ios.DeviceEntry, system bool, all bool, list bool, filesharing bool) {
-	svc, _ := installationproxy.New(device)
-	var err error
+	svc, err := installationproxy.New(device)
+	exitIfError("failed to connect to installationproxy", err)
 	var response []installationproxy.AppInfo
 	appType := ""
 	if all {
@@ -1302,7 +1376,7 @@ func saveScreenshot(device ios.DeviceEntry, outputPath string) {
 		exitIfError("getting filepath failed", err)
 	}
 
-	err = os.WriteFile(outputPath, imageBytes, 0o777)
+	err = os.WriteFile(outputPath, imageBytes, 0o644)
 	exitIfError("write file failed", err)
 
 	if JSONdisabled {
@@ -1352,10 +1426,10 @@ func resetLocation(device ios.DeviceEntry) {
 
 func processList(device ios.DeviceEntry, applicationsOnly bool) {
 	service, err := instruments.NewDeviceInfoService(device)
-	defer service.Close()
 	if err != nil {
 		exitIfError("failed opening deviceInfoService for getting process list", err)
 	}
+	defer service.Close()
 	processList, err := service.ProcessList()
 	if applicationsOnly {
 		var applicationProcessList []instruments.ProcessInfo
@@ -1475,12 +1549,12 @@ func startListening() {
 	go func() {
 		for {
 			deviceConn, err := ios.NewDeviceConnection(ios.GetUsbmuxdSocket())
-			defer deviceConn.Close()
 			if err != nil {
 				slog.Error("could not connect, will retry in 3 seconds...", "socket", ios.GetUsbmuxdSocket(), "error", err)
 				time.Sleep(time.Second * 3)
 				continue
 			}
+			defer deviceConn.Close()
 			muxConnection := ios.NewUsbMuxConnection(deviceConn)
 
 			attachedReceiver, err := muxConnection.Listen()
@@ -1820,6 +1894,11 @@ func pairDevice(device ios.DeviceEntry, orgIdentityP12File string, p12Password s
 	p12, err := os.ReadFile(orgIdentityP12File)
 	exitIfError("Invalid file:"+orgIdentityP12File, err)
 	err = ios.PairSupervised(device, p12, p12Password)
+	if errors.Is(err, ios.ErrDeviceLockedPairingDeferred) {
+		// Do not claim success: no pair record was written. Exit non-zero so automation
+		// can tell this apart from a completed pairing.
+		logFatal(fmt.Sprintf("Pairing incomplete for %s", device.Properties.SerialNumber), "err", err)
+	}
 	exitIfError("Pairing failed", err)
 	slog.Info(fmt.Sprintf("Successfully paired %s", device.Properties.SerialNumber))
 }
@@ -1879,6 +1958,9 @@ func deviceWithRsdProvider(device ios.DeviceEntry, udid string, address string, 
 	exitIfError(fmt.Sprintf("could not connect to RSD, host %s, port %d", address, rsdPort), err)
 	defer rsdService.Close()
 	rsdProvider, err := rsdService.Handshake()
+	// An unchecked handshake error would leave an empty RSD service list, and every
+	// service lookup would then misreport as 'service not available in RSD'.
+	exitIfError(fmt.Sprintf("RSD handshake failed, host %s, port %d", address, rsdPort), err)
 	device1, err := ios.GetDeviceWithAddress(udid, address, rsdProvider)
 	device1.UserspaceTUN = device.UserspaceTUN
 	device1.UserspaceTUNHost = device.UserspaceTUNHost
@@ -1932,10 +2014,12 @@ func logFatal(msg string, args ...any) {
 func splitKeyValuePairs(envArgs []string, sep string) map[string]interface{} {
 	env := make(map[string]interface{})
 	for _, entrystring := range envArgs {
-		entry := strings.Split(entrystring, sep)
-		key := entry[0]
-		value := entry[1]
-		env[key] = value
+		entry := strings.SplitN(entrystring, sep, 2)
+		if len(entry) != 2 {
+			slog.Warn("skipping malformed key/value entry, expected key"+sep+"value", "entry", entrystring)
+			continue
+		}
+		env[entry[0]] = entry[1]
 	}
 	return env
 }
