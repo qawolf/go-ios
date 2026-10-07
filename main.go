@@ -95,8 +95,10 @@ Usage:
   ios forward [options] [<hostPort> <targetPort>] [--port=<mapping>]...
   ios fsync [--app=bundleId] [options] (pull | push) --srcPath=<srcPath> --dstPath=<dstPath>
   ios fsync [--app=bundleId] [options] (rm [--r] | tree | mkdir) --path=<targetPath>
-  ios hid button <button> [options]
-  ios hid type <text> [options]
+  ios hid button <button> [--wake] [options]
+  ios hid drag <x1> <y1> <x2> <y2> [--duration=<seconds>] [--wake] [options]
+  ios hid tap <x> <y> [--wake] [options]
+  ios hid type <text> [--wake] [options]
   ios httpproxy <host> <port> [<user>] [<pass>] --p12file=<orgid> --password=<p12password> [options]
   ios httpproxy remove [options]
   ios image auto [--basedir=<where_dev_images_are_stored>] [options]
@@ -307,8 +309,13 @@ The commands work as following:
                                                                   Remove | treeview | mkdir in target path.
                                                                   --r used alongside rm will recursively remove all files and directories from target path.
 
-    ios hid button <button> [options]                             Press a hardware button over CoreDevice HID: home or lock (iOS 27+). Requires tunnel and the developer image.
-    ios hid type <text> [options]                                 Type <text> on a virtual hardware keyboard, US layout (iOS 27+). Requires tunnel and the developer image.
+    ios hid button <button> [--wake] [options]                    Press a hardware button over CoreDevice HID: home or lock (iOS 27+). Requires tunnel and the developer image.
+    ios hid drag <x1> <y1> <x2> <y2> [--duration=<seconds>] [--wake] [options]
+                                                                  Drag one contact from (x1,y1) to (x2,y2), default 0.3 s. Coordinates are 0-65535 across the screen.
+    ios hid tap <x> <y> [--wake] [options]                        Tap at (x,y), 0-65535 across the screen from the top left.
+    ios hid type <text> [--wake] [options]                        Type <text> on a virtual hardware keyboard, US layout (iOS 27+). Requires tunnel and the developer image.
+                                                                  --wake keeps a display stream open during the command, which turns a dimmed screen on (kernel tunnel only).
+                                                                  Touch may need it too: without a stream the device can drop touches silently.
 
     ios httpproxy <host> <port> [<user>] [<pass>] --p12file=<orgid> [--password=<p12password>]
                                                                   Set global http proxy on supervised device.
