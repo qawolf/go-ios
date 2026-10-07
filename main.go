@@ -95,6 +95,8 @@ Usage:
   ios forward [options] [<hostPort> <targetPort>] [--port=<mapping>]...
   ios fsync [--app=bundleId] [options] (pull | push) --srcPath=<srcPath> --dstPath=<dstPath>
   ios fsync [--app=bundleId] [options] (rm [--r] | tree | mkdir) --path=<targetPath>
+  ios hid button <button> [options]
+  ios hid type <text> [options]
   ios httpproxy <host> <port> [<user>] [<pass>] --p12file=<orgid> --password=<p12password> [options]
   ios httpproxy remove [options]
   ios image auto [--basedir=<where_dev_images_are_stored>] [options]
@@ -304,6 +306,9 @@ The commands work as following:
     ios fsync [--app=bundleId] [options] (rm [--r] | tree | mkdir) --path=<targetPath>
                                                                   Remove | treeview | mkdir in target path.
                                                                   --r used alongside rm will recursively remove all files and directories from target path.
+
+    ios hid button <button> [options]                             Press a hardware button over CoreDevice HID: home or lock (iOS 27+). Requires tunnel and the developer image.
+    ios hid type <text> [options]                                 Type <text> on a virtual hardware keyboard, US layout (iOS 27+). Requires tunnel and the developer image.
 
     ios httpproxy <host> <port> [<user>] [<pass>] --p12file=<orgid> [--password=<p12password>]
                                                                   Set global http proxy on supervised device.
