@@ -11,14 +11,15 @@ import (
 // report is one call recorded by fakeHID, so a test can assert what a gesture
 // put on the wire rather than what it meant to.
 type report struct {
-	kind  string
-	state touchState
-	x, y  uint16
+	kind   string
+	state  touchState
+	x, y   uint16
+	usages []uint8
 }
 
 type fakeHID struct {
 	reports []report
-	// failAt makes the nth SendTouch call fail, to exercise the paths that
+	// failAt makes the nth send call fail, to exercise the paths that
 	// have to clean up after a gesture breaks part way through.
 	failAt int
 	calls  int
@@ -30,6 +31,20 @@ func (f *fakeHID) sendTouch(state touchState, p Point) error {
 		return errors.New("send failed")
 	}
 	f.reports = append(f.reports, report{kind: "touch", state: state, x: p.X, y: p.Y})
+	return nil
+}
+
+func (f *fakeHID) createKeyboard() (uint64, error) {
+	f.reports = append(f.reports, report{kind: "createKeyboard"})
+	return keyboardServiceID, nil
+}
+
+func (f *fakeHID) sendKeyboard(serviceID uint64, usages []uint8) error {
+	f.calls++
+	if f.failAt > 0 && f.calls == f.failAt {
+		return errors.New("send failed")
+	}
+	f.reports = append(f.reports, report{kind: "key", usages: append([]uint8{}, usages...)})
 	return nil
 }
 

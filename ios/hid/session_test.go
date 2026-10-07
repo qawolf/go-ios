@@ -18,6 +18,8 @@ func TestClosedSessionRejectsEverything(t *testing.T) {
 
 	assert.Error(t, s.TouchDown(Point{}))
 	assert.Error(t, s.TouchUp(Point{}))
+	assert.Error(t, s.PressButton(ButtonHome))
+	assert.Error(t, s.Type("a"))
 }
 
 // Close runs on the teardown path of a failed open, so it must tolerate a

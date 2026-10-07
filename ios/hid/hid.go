@@ -1,6 +1,8 @@
-// Package hid injects touch events over CoreDevice. A media stream has to be
-// running for the device to apply them, and starting one is the caller's job:
-// without it every report is accepted and discarded with no error. iOS 27+.
+// Package hid injects touch, hardware button and keyboard events over
+// CoreDevice. A media stream has to be running for the device to apply touch,
+// and starting one is the caller's job: without it every touch report is
+// accepted and discarded with no error. Buttons and the keyboard need no
+// stream. iOS 27+.
 package hid
 
 import (
@@ -53,6 +55,34 @@ func (c *universalConnection) sendTouch(state touchState, p Point) error {
 	report := buildTouchscreenReport(state, p.X, p.Y, timestamp())
 	if err := c.sendReport(surfaceMainTouchscreen, report); err != nil {
 		return fmt.Errorf("sendTouch: %w", err)
+	}
+	return nil
+}
+
+// createKeyboard registers a host-side virtual keyboard with dtuhidd and returns
+// the service id to address its reports to. The on-screen keyboard hides while
+// it is registered.
+func (c *universalConnection) createKeyboard() (uint64, error) {
+	if err := c.conn.Send(buildCreateKeyboardPayload(keyboardServiceID), xpc.HeartbeatRequestFlag); err != nil {
+		return 0, fmt.Errorf("createKeyboard: failed to send request: %w", err)
+	}
+	res, err := c.conn.ReceiveOnServerClientStream()
+	if err != nil {
+		return 0, fmt.Errorf("createKeyboard: failed to read response: %w", err)
+	}
+	switch id := res["serviceID"].(type) {
+	case uint64:
+		return id, nil
+	case int64:
+		return uint64(id), nil
+	}
+	return keyboardServiceID, nil
+}
+
+// sendKeyboard posts the full set of usages held down; none releases every key.
+func (c *universalConnection) sendKeyboard(serviceID uint64, usages []uint8) error {
+	if err := c.sendReport(serviceID, buildKeyboardReport(usages, timestamp())); err != nil {
+		return fmt.Errorf("sendKeyboard: %w", err)
 	}
 	return nil
 }
