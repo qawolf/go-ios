@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/danielpaulus/go-ios/ios"
+	"github.com/danielpaulus/go-ios/ios/deviceinfo"
 	"github.com/danielpaulus/go-ios/ios/display"
 	"github.com/danielpaulus/go-ios/ios/hid"
 	"github.com/docopt/docopt-go"
@@ -20,6 +21,7 @@ var hidButtons = map[string]hid.Button{
 
 const (
 	hidTapHold             = 60 * time.Millisecond
+	hidWakeSettle          = 1500 * time.Millisecond
 	hidDragStep            = 15 * time.Millisecond
 	hidDefaultDragDuration = 300 * time.Millisecond
 )
@@ -168,6 +170,7 @@ func startWakeStream(device ios.DeviceEntry) (func(), error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	started := time.Now()
 	sessionID, err := svc.StartVideoStream(ctx, display.VideoStreamRequest{
 		ReceiverIP:   recv.IP(),
 		ReceiverPort: recv.Port(),
@@ -178,8 +181,16 @@ func startWakeStream(device ios.DeviceEntry) (func(), error) {
 		_ = recv.Close()
 		return nil, err
 	}
-	// Give the backlight time to come on before the first input.
-	time.Sleep(500 * time.Millisecond)
+	// Input sent before the backlight is on is dropped: the device ignores
+	// digitizer events while the display is off. The screen came on about a
+	// second after the stream started. deviceinfo can still report "activeOn"
+	// for a screen that is off, so the wait has a floor as well.
+	if err := waitForBacklight(device, 5*time.Second); err != nil {
+		slog.Warn("The display stream started, but the screen did not report on", "error", err)
+	}
+	if wait := hidWakeSettle - time.Since(started); wait > 0 {
+		time.Sleep(wait)
+	}
 
 	return func() {
 		// The stop has to be the only request awaiting a reply on its connection.
@@ -195,4 +206,29 @@ func startWakeStream(device ios.DeviceEntry) (func(), error) {
 		}
 		_ = recv.Close()
 	}, nil
+}
+
+// waitForBacklight polls the device's display info until the backlight is no
+// longer off. Starting the stream only asks for the wake; it takes about a second.
+func waitForBacklight(device ios.DeviceEntry, timeout time.Duration) error {
+	info, err := deviceinfo.NewDeviceInfo(device)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = info.Close() }()
+
+	deadline := time.Now().Add(timeout)
+	for {
+		display, err := info.GetDisplayInfo()
+		if err != nil {
+			return err
+		}
+		if state, _ := display["backlightState"].(string); state != "" && state != "off" {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("backlight still off after %s", timeout)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
